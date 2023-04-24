@@ -1,0 +1,14 @@
+server:
+  port: 8081
+
+logging:
+  level:
+    root: info
+
+bingconfig:
+  proxy_address: ${PROXY-ADDRESS}
+  proxy_port: ${PROXY-PORT}
+  cookie: ${COOKIE}
+spring:
+  config:
+    import: .env.properties

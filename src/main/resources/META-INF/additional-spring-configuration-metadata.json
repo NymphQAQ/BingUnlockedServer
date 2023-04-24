@@ -1,0 +1,16 @@
+{
+  "properties": [
+    {
+      "name": "bingconfig.proxy_address",
+      "type": "java.lang.String"
+    },
+    {
+      "name": "bingconfig.proxy_port",
+      "type": "java.lang.Integer"
+    },
+    {
+      "name": "bingconfig.cookie",
+      "type": "java.lang.String"
+    }
+  ]
+}
