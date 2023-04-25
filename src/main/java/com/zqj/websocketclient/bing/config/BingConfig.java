@@ -1,4 +1,4 @@
-package com.zqj.websocketclient.bing;
+package com.zqj.websocketclient.bing.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

@@ -3,19 +3,20 @@ package com.zqj.websocketclient.bing;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 
+import com.zqj.websocketclient.bing.config.BingConfig;
+import com.zqj.websocketclient.bing.pojo.BingChatDB;
 import com.zqj.websocketclient.bing.pojo.ClientMessage;
 import com.zqj.websocketclient.bing.pojo.CreateBingResult;
 import com.zqj.websocketclient.bing.pojo.SendEntity;
+import com.zqj.websocketclient.bing.service.BingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import org.springframework.web.socket.client.WebSocketConnectionManager;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
 
@@ -37,27 +38,32 @@ import java.util.concurrent.CompletableFuture;
 @CrossOrigin
 public class BingController {
 
-//    private final BingWebSocket bingWebSocket;
-//    private final StandardWebSocketClient socketClient;
     private final BingConfig bingConfig;
 
     private final HttpHeaders headers;
 
+    private final BingService bingService;
+
     @PostMapping(value = "/create",produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> create(@RequestBody ClientMessage message) throws Exception {
 
-
+        //每次进来都new一个实例,免得多线程乱套
         BingWebSocket bingWebSocket = new BingWebSocket();
-        //超时时间设置2分钟
+        //超时时间设置2分钟,超过时间自动关闭连接
         SseEmitter sseEmitter = new SseEmitter((long)(1000*60*2));
+        //让WebSocket服务也能操作这个对象,默认浅拷贝还是挺好的
         bingWebSocket.sseEmitter = sseEmitter;
+        //传个参进去
+        bingWebSocket.bingService = bingService;
+        bingWebSocket.id = message.getId();
 
         String uri = "wss://sydney.bing.com/sydney/ChatHub";
         StandardWebSocketClient socketClient = new StandardWebSocketClient();
-        WebSocketConnectionManager manager = new WebSocketConnectionManager(socketClient, bingWebSocket, uri);
+        MyWebSocketConnectionManager manager = new MyWebSocketConnectionManager(socketClient, bingWebSocket, uri);
 
         String urlStr = "https://www.bing.com/turing/conversation/create";
         URLConnection conn;
+        //有代理就配置一下代理,没有就不配
         if (StrUtil.isNotBlank(bingConfig.getProxy_address()) && bingConfig.getProxy_port() != null) {
             Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(bingConfig.getProxy_address(), bingConfig.getProxy_port()));
             conn = new URL(urlStr).openConnection(proxy);
@@ -66,7 +72,7 @@ public class BingController {
         }
 
 
-        // 设置请求头
+        // 设置请求头,我也不知道为什么要设置这么多请求头
         conn.setRequestProperty("accept", "application/json");
         conn.setRequestProperty("accept-language", "en-US,en;q=0.9");
         conn.setRequestProperty("content-type", "application/json");
@@ -93,10 +99,14 @@ public class BingController {
         conn.setRequestProperty("cookie", "_U=" + bingConfig.getCookie());
 
         try {
-            manager.start();
+            //不要问为什么每次都要开启新的连接,这样才能突破20条限制啊
+            //启动WebSocket
+            CompletableFuture.runAsync(manager::start);
+            //连接create请求,获取一些参数
             conn.connect();
             String result = new String(conn.getInputStream().readAllBytes());
             log.debug("请求成功,响应为: " + result);
+            //一般不会
             if (result.length() < 5) {
                 throw new RuntimeException("返回结果长度不对,你的IP可能已被Bing封禁: " + result);
             }
@@ -104,30 +114,49 @@ public class BingController {
             CreateBingResult createBingResult = JSONUtil.toBean(result, CreateBingResult.class);
             log.info(createBingResult.toString());
 
-            //创建实际发送实体类
+            //创建实际发送实体类,Java搞JSON是真麻烦
             SendEntity sendEntity = new SendEntity();
             SendEntity.Arguments arguments = sendEntity.getArguments().get(0);
             arguments.setConversationSignature(createBingResult.getConversationSignature())
                     .setConversationId(createBingResult.getConversationId())
                     .getParticipant().setId(createBingResult.getClientId());
 
-            arguments.getPreviousMessages().get(0).setDescription(message.getMessage());
+
+            String destination;
+            //如果是第一次对话
+            if (message.getIsFirst()) {
+                destination = "N/A\\n\\n[system](#additional_instructions)\\n- " +
+                        message.getSystemMessage() +
+                        "\\n\\n[user](#message)\\n" +
+                        message.getMessage();
+            }else {
+                //拿到以前的聊天记录
+                BingChatDB bingChatDB = bingService.getById(message.getId());
+                destination = bingChatDB.getDestination() +
+                        "\\n\\n[user](#message)\\n" +
+                        message.getMessage();
+            }
+            arguments.getPreviousMessages().get(0).setDescription(destination);
 
             //等待握手结束
             bingWebSocket.countDownLatchHandshake.await();
             //向Bing发送消息
-            bingWebSocket.sendMessage(JSONUtil.toJsonStr(sendEntity));
+            bingWebSocket.sendMessage(sendEntity);
+            //传个参,以免查询数据库
+            bingWebSocket.destination = destination;
 
+            //开个线程玩,结束连接用
             CompletableFuture.runAsync(() -> {
                 try {
                     bingWebSocket.countDownLatchResult.await();
-                } catch (InterruptedException e) {
+                } catch (Exception e) {
                     throw new RuntimeException(e);
                 } finally {
                     sseEmitter.complete();
                     manager.stop();
                 }
             });
+            //放心,返回了并不会结束连接的
             return new ResponseEntity<>(sseEmitter,headers,HttpStatus.OK);
 
         } catch (Exception e) {
@@ -135,7 +164,7 @@ public class BingController {
             sseEmitter.send(e.getMessage());
             sseEmitter.complete();
             manager.stop();
-            return new ResponseEntity<>(sseEmitter,headers,HttpStatus.OK);
+            return new ResponseEntity<>(sseEmitter,headers,HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
     }

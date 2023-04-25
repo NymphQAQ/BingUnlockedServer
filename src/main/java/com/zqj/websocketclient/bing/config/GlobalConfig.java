@@ -1,4 +1,4 @@
-package com.zqj.websocketclient.bing;
+package com.zqj.websocketclient.bing.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
