@@ -7,14 +7,13 @@ import com.zqj.websocketclient.bing.pojo.BingChatDB;
 import com.zqj.websocketclient.bing.pojo.ResultOne;
 import com.zqj.websocketclient.bing.pojo.SendEntity;
 import com.zqj.websocketclient.bing.service.BingService;
-import lombok.AllArgsConstructor;
-import lombok.NoArgsConstructor;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.socket.*;
 
+import java.io.IOException;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.CountDownLatch;
 
 /**
@@ -37,17 +36,21 @@ public class BingWebSocket implements WebSocketHandler {
     public BingService bingService;
     public String id;
     public String destination;
+    /**
+     * 定时器
+     */
+    Timer timer = new Timer();
     private WebSocketSession session;
     private String tempText = "";
     private String result;
-
-
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         this.session = session;
         session.sendMessage(new TextMessage("{\"protocol\":\"json\",\"version\":1}"));
+        sendPing();
         countDownLatchHandshake.countDown();
+
     }
 
     @Override
@@ -58,36 +61,36 @@ public class BingWebSocket implements WebSocketHandler {
 //        log.info("收到文本消息：" + payload);
         String[] objects = payload.split("");
         result = objects[0];
-        //如果接收到"{}",立马发送ping
-        if (result.equals("{}") || result.equals("{\"type\":6}")) {
-            log.info("ping........");
-            session.sendMessage(new TextMessage("{\"type\":6}"));
-        } else {
-            try {
-                ResultOne resultOne = JSONUtil.toBean(result, ResultOne.class);
-                if (resultOne.getType().equals(1)) {
-                    if (resultOne.getArguments().get(0).getMessages() != null) {
-                        //拿到消息内容
-                        String text = resultOne.getArguments().get(0).getMessages().get(0).getText();
-                        //截取反交集的内容
-                        String data = text.substring(tempText.length());
-                        //增加反斜杠
-                        String replace = data.replace("\n", "\\n").replace(" ", "  ");
-                        //向前端发送消息
-                        sseEmitter.send(replace);
-                        log.info(replace);
 
-                        tempText = text;
-                    }
-                }else if (resultOne.getType().equals(2)){
-                    countDownLatchResult.countDown();
+        try {
+            ResultOne resultOne = JSONUtil.toBean(result, ResultOne.class);
+            if (resultOne.getType().equals(1)) {
+                if (resultOne.getArguments().get(0).getMessages() != null) {
+                    //拿到消息内容
+                    String text = resultOne.getArguments().get(0).getMessages().get(0).getText();
+                    //截取反交集的内容
+                    String data = text.substring(tempText.length());
+                    //增加反斜杠
+                    String replace = data.replace("\n", "</br>").replace(" ", "  ");
+
+                    //最后一次数据
+                    tempText = text;
+
+                    //向前端发送消息
+                    sseEmitter.send(replace);
+//                    log.info(replace);
+
+
                 }
-//                log.info(result);
-
-            } catch (Exception e) {
-                log.warn(e.getMessage());
+            } else if (resultOne.getType().equals(2)) {
+                countDownLatchResult.countDown();
             }
+            log.info(result);
+
+        } catch (Exception e) {
+            log.warn(e.getMessage());
         }
+
 
     }
 
@@ -100,13 +103,14 @@ public class BingWebSocket implements WebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) throws Exception {
         //有可能服务端主动关
         countDownLatchResult.countDown();
+        stopPing();
         log.info("关闭了WebSocket连接");
         if (StrUtil.isNotBlank(destination)) {
             //准备更新数据
             BingChatDB bingChatDB = new BingChatDB();
             bingChatDB.setId(this.id)
                     .setDestination(destination +
-                            "\\n\\n[assistant](#message)\\n" +
+                            "[assistant](#message)" +
                             tempText)
                     .setResultMessage(result);
             bingService.saveOrUpdate(bingChatDB);
@@ -134,6 +138,31 @@ public class BingWebSocket implements WebSocketHandler {
         bingService.saveOrUpdate(bingChatDB);
         log.info("发送消息存入数据库成功!");
         log.info(messageJson);
+    }
+
+    /**
+     * 启动计时器
+     */
+    public void sendPing() {
+        TimerTask timerTask = new TimerTask() {
+            @Override
+            public void run() {
+                try {
+                    session.sendMessage(new TextMessage("{\"type\":6}"));
+                    log.info("ping........");
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        };
+        //0秒之后开始执行,每10秒执行一次
+        timer.schedule(timerTask,0, 10 * 1000);
+
+    }
+
+    public void stopPing() {
+        timer.cancel();
+        log.info("停止了计时器");
     }
 
 

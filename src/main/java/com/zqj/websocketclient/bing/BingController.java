@@ -4,10 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 
 import com.zqj.websocketclient.bing.config.BingConfig;
-import com.zqj.websocketclient.bing.pojo.BingChatDB;
-import com.zqj.websocketclient.bing.pojo.ClientMessage;
-import com.zqj.websocketclient.bing.pojo.CreateBingResult;
-import com.zqj.websocketclient.bing.pojo.SendEntity;
+import com.zqj.websocketclient.bing.pojo.*;
 import com.zqj.websocketclient.bing.service.BingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,8 +21,12 @@ import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
+import java.util.Arrays;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * @author Rebecca
@@ -125,15 +126,15 @@ public class BingController {
             String destination;
             //如果是第一次对话
             if (message.getIsFirst()) {
-                destination = "N/A\\n\\n[system](#additional_instructions)\\n- " +
+                destination = "[system](#additional_instructions)- " +
                         message.getSystemMessage() +
-                        "\\n\\n[user](#message)\\n" +
+                        "[user](#message)" +
                         message.getMessage();
             }else {
                 //拿到以前的聊天记录
                 BingChatDB bingChatDB = bingService.getById(message.getId());
                 destination = bingChatDB.getDestination() +
-                        "\\n\\n[user](#message)\\n" +
+                        "[user](#message)" +
                         message.getMessage();
             }
             arguments.getPreviousMessages().get(0).setDescription(destination);
@@ -167,6 +168,36 @@ public class BingController {
             return new ResponseEntity<>(sseEmitter,headers,HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
+    }
+
+    /**
+     * 获取当前会话的聊天记录
+     * @return 对话列表
+     */
+    @GetMapping("/getChat")
+    public List<?> getChat(String id) {
+        BingChatDB bingChatDB = bingService.getById(id);
+        String[] split = bingChatDB.getDestination().split("");
+        //用来记录循环次数
+        AtomicLong atomicLong = new AtomicLong();
+
+        return Arrays.stream(split).map(item -> {
+            WebChatRec webChatRec = new WebChatRec();
+            if (item.contains("[system](#additional_instructions)")) {
+                webChatRec.setId(atomicLong.incrementAndGet())
+                        .setIsMe(true)
+                        .setContent(item.replace("\n","</br>"));
+            } else if (item.contains("[user](#message)")) {
+                webChatRec.setId(atomicLong.incrementAndGet())
+                        .setIsMe(true)
+                        .setContent(item.substring(16).replace("\n","</br>"));
+            } else if (item.contains("[assistant](#message)")) {
+                webChatRec.setId(atomicLong.incrementAndGet())
+                        .setIsMe(false)
+                        .setContent(item.substring(21).replace("\n","</br>"));
+            }
+            return webChatRec;
+        }).toList();
     }
 
 }
