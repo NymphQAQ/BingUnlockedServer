@@ -100,7 +100,7 @@ public class BingController {
         conn.setRequestProperty("cookie", "_U=" + bingConfig.getCookie());
 
         try {
-            //不要问为什么每次都要开启新的连接,这样才能突破20条限制啊
+            //每次都要开启新的连接,这样才能突破20条限制
             //启动WebSocket
             CompletableFuture.runAsync(manager::start);
             //连接create请求,获取一些参数
@@ -198,6 +198,11 @@ public class BingController {
             }
             return webChatRec;
         }).toList();
+    }
+
+    @GetMapping("/getSessionList")
+    public List<String> getSessionList() {
+        return bingService.lambdaQuery().list().stream().map(BingChatDB::getId).toList();
     }
 
 }

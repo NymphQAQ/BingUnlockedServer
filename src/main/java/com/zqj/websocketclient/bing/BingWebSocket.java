@@ -96,7 +96,7 @@ public class BingWebSocket implements WebSocketHandler {
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
-
+        log.warn(exception.getMessage());
     }
 
     @Override
