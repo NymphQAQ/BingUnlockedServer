@@ -61,6 +61,7 @@ public class BingWebSocket implements WebSocketHandler {
 //        log.info("收到文本消息：" + payload);
         String[] objects = payload.split("");
         result = objects[0];
+        log.info(result);
 
         try {
             ResultOne resultOne = JSONUtil.toBean(result, ResultOne.class);

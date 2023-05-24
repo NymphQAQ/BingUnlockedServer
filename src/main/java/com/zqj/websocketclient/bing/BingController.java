@@ -97,7 +97,7 @@ public class BingController {
         conn.setRequestProperty("Referrer-Policy", "origin-when-cross-origin");
         conn.setRequestProperty("x-forwarded-for", "1.1.1.1");
         conn.setRequestProperty("x-ms-client-request-id", UUID.randomUUID().toString());
-        conn.setRequestProperty("cookie", "_U=" + bingConfig.getCookie());
+        conn.setRequestProperty("cookie", "SRCHHPGUSR=" + bingConfig.getCookie());
 
         try {
             //每次都要开启新的连接,这样才能突破20条限制
